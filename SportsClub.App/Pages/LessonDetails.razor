@@ -1,0 +1,233 @@
+﻿@using SportsClub.App.Components
+@using SportsClub.Models.Dtos
+@using SportsClub.SharedModels.Dtos
+@using System.Text.Json
+@using System.Text
+@inject HttpClient httpClient
+
+﻿<div class="drawer-wrapper @(_isOpen ? "slide" : "")">
+    <div class="drawer-mask"></div>
+    <div class="drawer">
+        @if (_selectedLesson is not null)
+        {
+            if (IsLoading)
+            {
+                <p>Loading...</p>
+            }
+            else
+            {
+
+                <div class="drawer-content">
+                    <img src="@_selectedLesson.Image"/>
+                    <div class="lesson-details">
+                        <h3>@_selectedLesson.Title</h3>
+                        <h6 class="mb-3 text-muted"><span class="oi oi-map-marker"></span> @_selectedLesson.Location</h6>
+                        <div class="mt-4">
+                            <span class="mr-5"><span class="oi oi-clock mr-2"></span> @_selectedLesson.StartTime</span>
+                            <span><span class="oi oi-infinity mr-2"></span> @_selectedLesson.Duration minutes</span>
+                        </div>
+                        <p class="mt-4">@_selectedLesson.Description</p>
+                    </div>
+                </div>
+                <Popup @ref="popupRef"/>
+                <div class="drawer-controls">
+                    
+                    @if (_selectedLesson != null)
+                    {
+                        if (_selectedEnrollment != null)
+                        {
+                            if (_selectedEnrollment.EnrolledStatus == "Enrolled")
+                            {
+                                <button class='btn btn-secondary' @onclick='CancelEnrollment'>Cancel Enrollment</button>
+                            }
+                            else if (_selectedEnrollment.EnrolledStatus == "Waiting" && _selectedLesson.CurrentCapicity < _selectedLesson.MaxCapicity)
+                            {
+                                <button class='btn btn-secondary' @onclick='Enroll'>Enroll Lesson</button>
+
+                            }
+                            else if (_selectedEnrollment.EnrolledStatus == "Waiting")
+                            {
+                                <button class='btn btn-secondary'>In waiting list</button>
+                            }
+                        }
+                        else
+                        {
+                            if (_selectedLesson.CurrentCapicity < _selectedLesson.MaxCapicity)
+                            {
+                                <button class='btn btn-secondary' @onclick='Enroll'>Enroll Lesson</button>
+                            }
+                            else if (_selectedLesson.CurrentCapicity == _selectedLesson.MaxCapicity)
+                            {
+                                <button class='btn btn-secondary'>Full</button>
+                                <button class='btn btn-secondary' @onclick='Enroll'>Notify Me</button>
+                            }
+                        }
+                    }
+
+                    <button class="btn btn-secondary" @onclick="Close">Close Lesson</button>
+                    
+
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private bool _isOpen;
+    private bool IsLoading { get; set; }
+    private LessonDto? _selectedLesson;
+    private EnrollmentDto? _selectedEnrollment;
+    private Popup? popupRef;
+    private string Email = "test@avans.local";
+    [Parameter] public LessonDto? Lesson { get; set; }
+    public EnrollmentDto? Enrollment { get; set; }
+
+
+    protected override void OnParametersSet()
+    {
+        if (Lesson != null)
+        {
+            _selectedLesson = Lesson;
+            _isOpen = true;
+            IsLoading = true;
+            InitializeSelectedEnrollment(Email, _selectedLesson.Id);
+        }
+
+
+    }
+
+    private async Task Enroll()
+    {
+        try
+        {
+            // Hardcoded email for testing
+            string userEmail = Email;
+            int LessonId = _selectedLesson.Id;
+            string Location = _selectedLesson.Location;
+            DateTime startDateTime = _selectedLesson.StartTime;
+            bool isEnrolled = (_selectedLesson.MaxCapicity > _selectedLesson.CurrentCapicity);
+            int WorkoutId = _selectedLesson.WorkoutId;
+
+            var enrollmentDto = new EnrollmentDto(
+
+                
+                0,
+                LessonId,
+                WorkoutId,
+                Location,
+                userEmail,
+                startDateTime,
+                string.Empty,
+                default
+            );
+
+            string enrollmentData = JsonSerializer.Serialize(enrollmentDto);
+            var content = new StringContent(enrollmentData, Encoding.UTF8, "application/json");
+
+
+            HttpResponseMessage response = await httpClient.PostAsync("api/Enrollment/reserve", content);
+            if (response.IsSuccessStatusCode)
+            {
+                await InitializeSelectedEnrollment(userEmail, _selectedLesson.Id);
+                // Enrollment was successful, update UI accordingly
+                if (_selectedEnrollment != null && _selectedEnrollment.EnrolledStatus == "Waiting")
+                {
+                    popupRef?.Show($"You will receive an email when: {_selectedLesson?.Title} at {_selectedLesson?.StartTime.ToShortTimeString()} is available", "Notify succeeded!");
+                }
+                else 
+                {
+                    popupRef?.Show($"Enjoy: {_selectedLesson?.Title} at {_selectedLesson?.StartTime.ToShortTimeString()}", "Enrollment succeeded!");
+
+                }
+
+            }
+            else
+            {
+                // Enrollment failed, handle error
+                popupRef?.Show($"Enrollment failed!", "Error");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"An error occurred: {ex.Message}");
+        }
+        StateHasChanged();
+    }
+
+    private async Task CancelEnrollment()
+    {
+        try
+        {
+            // Hardcoded email for testing
+            string userEmail = Email;
+            int lessonId = _selectedLesson.Id;
+
+            HttpResponseMessage response = await httpClient.DeleteAsync($"api/Enrollment/cancel/{userEmail}/{lessonId}");
+            if (response.IsSuccessStatusCode)
+            {
+                popupRef?.Show("Successfully cancelled enrollment!", "Cancellation succeeded!");
+                _selectedEnrollment = null;
+
+                await InitializeSelectedEnrollment(userEmail, lessonId);
+                await FetchSelectedLesson(lessonId);
+                StateHasChanged();
+
+            }
+            else
+            {
+                // Cancellation failed, handle error
+                popupRef?.Show("Failed to cancel enrollment!", "Error");
+            }
+
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"An error occurred: {ex.Message}");
+        }
+
+    }
+
+    private void Close()
+    {
+        _selectedLesson = null;
+        _selectedEnrollment = null;
+        _isOpen = false;
+    }
+
+    private async Task InitializeSelectedEnrollment(string email, int lessonId)
+    {
+        if (_selectedLesson != null)
+        {
+            var response = await httpClient.GetAsync($"api/Enrollment/currentUser/{email}/{lessonId}");
+
+            if (response.IsSuccessStatusCode)
+            {
+                var content = await response.Content.ReadAsStringAsync();
+                var enrollments = JsonSerializer.Deserialize<IEnumerable<EnrollmentDto>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                _selectedEnrollment = enrollments?.FirstOrDefault();
+
+
+            }
+
+        }
+        IsLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task FetchSelectedLesson(int lessonId)
+    {
+        var response = await httpClient.GetAsync($"api/Enrollment/FetchLesson/{lessonId}");
+        if (response.IsSuccessStatusCode)
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            var lesson = JsonSerializer.Deserialize<IEnumerable<LessonDto>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            _selectedLesson = lesson?.FirstOrDefault();
+        }
+    }
+
+    
+
+}

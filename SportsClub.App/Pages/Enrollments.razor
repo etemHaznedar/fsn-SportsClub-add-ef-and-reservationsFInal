@@ -1,0 +1,80 @@
+@page "/enrolled/{workoutId}"
+
+@using SportsClub.Models.Dtos
+@inject HttpClient Http
+@inject NavigationManager NavManager
+
+<PageTitle>Todays trainings</PageTitle>
+
+<h3>My Enrollments</h3>
+    <div>
+    <button class="btn btn-secondary" @onclick="RefreshPage">Refresh Lessons</button>
+    </div>
+@if (lessons == null)
+{
+    <h3>Loading lessons...</h3>
+}
+
+else if (lessons.Count() > 0)
+{
+    <LessonDetails Lesson="_selectedLesson" />
+    <h3 class="mb-5">Lessons enrolled for workout:</h3>
+
+    <div class="grid">
+
+        @foreach (var lesson in lessons)
+        {
+            <LessonCard Lesson="lesson" OnSelected="HandleLessonSelected" />
+        }
+    </div>
+}
+else
+{
+    <h4>No enrollments for this workout</h4>
+}
+
+@code {
+    [Parameter] 
+    public string workoutId { get; set; }
+    private LessonDto? _selectedLesson;
+    private int Workoutid;
+    private string Email = "test@test.local";
+
+    
+
+    public required IEnumerable<LessonDto> lessons = Enumerable.Empty<LessonDto>();
+    protected override void OnParametersSet()
+    {
+        Workoutid = int.Parse(workoutId);
+        OnInitializedAsync();
+
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+
+        await LoadLessons();
+    }
+    
+    private async Task LoadLessons()
+    {
+        try
+        {
+            var result = await Http.GetFromJsonAsync<IEnumerable<LessonDto>>($"api/Enrollment/lessons/{Workoutid}/{Email}");
+            lessons = result ?? Enumerable.Empty<LessonDto>();
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.WriteLine($"There was a problem loading lesson data: {ex.Message}");
+        }
+        StateHasChanged();
+
+    }
+    private void RefreshPage()
+    {
+        NavManager.NavigateTo($"/enrolled/{workoutId}", forceLoad: true);
+    }
+
+    private void HandleLessonSelected(LessonDto lesson)
+        => _selectedLesson = lesson;
+}
